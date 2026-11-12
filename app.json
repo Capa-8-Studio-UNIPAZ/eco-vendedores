@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "eco-emprendedores",
-    "slug": "eco-emprendedores",
+    "slug": "expoemprendedores",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
