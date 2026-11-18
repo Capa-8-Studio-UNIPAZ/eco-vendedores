@@ -39,6 +39,7 @@ interface ErroresRegistro {
   telefono?: string;
   pin?: string;
   puntoReferencial?: string;
+  politica?: string;
 }
 
 interface ErroresProducto {
@@ -49,6 +50,102 @@ interface ErroresProducto {
 }
 
 const REGEX_TELEFONO_COLOMBIA = /^\d{10}$/;
+
+function combinarUbicacion(zona: string, referencia: string): string {
+  const zonaLimpia = zona.trim();
+  const refLimpia = referencia.trim();
+  if (!zonaLimpia) {
+    return refLimpia;
+  }
+  return refLimpia ? `${zonaLimpia} · ${refLimpia}` : zonaLimpia;
+}
+
+function separarUbicacion(ubicacion: string): {
+  zona: string;
+  referencia: string;
+} {
+  const limpia = ubicacion.trim();
+  const zonaEncontrada = PUNTOS_REFERENCIALES_UNIPAZ.find((z) =>
+    limpia.startsWith(z)
+  );
+  if (!zonaEncontrada) {
+    return {
+      zona: PUNTOS_REFERENCIALES_UNIPAZ[0],
+      referencia: limpia,
+    };
+  }
+  const resto = limpia
+    .slice(zonaEncontrada.length)
+    .replace(/^\s*[·\-–(]+\s*/, '')
+    .replace(/\)\s*$/, '')
+    .trim();
+  return { zona: zonaEncontrada, referencia: resto };
+}
+
+interface SelectorUbicacionCampusProps {
+  titulo: string;
+  zona: string;
+  onSelectZona: (nuevaZona: string) => void;
+  referencia: string;
+  onChangeReferencia: (texto: string) => void;
+  error?: string;
+}
+
+const SelectorUbicacionCampus: React.FC<SelectorUbicacionCampusProps> = ({
+  titulo,
+  zona,
+  onSelectZona,
+  referencia,
+  onChangeReferencia,
+  error,
+}) => (
+  <View style={styles.grupoCampo}>
+    <Text style={styles.etiqueta}>
+      {titulo} <Text style={styles.obligatorio}>*</Text>
+    </Text>
+
+    <View style={styles.sugerenciasContenedor}>
+      {PUNTOS_REFERENCIALES_UNIPAZ.map((punto) => {
+        const seleccionado = zona === punto;
+        return (
+          <Pressable
+            key={punto}
+            onPress={() => onSelectZona(punto)}
+            style={[
+              styles.chipUbicacion,
+              seleccionado && styles.chipUbicacionActivo,
+            ]}
+            accessibilityRole="button"
+            accessibilityState={{ selected: seleccionado }}
+          >
+            <Text
+              style={[
+                styles.chipUbicacionTexto,
+                seleccionado && styles.chipUbicacionTextoActivo,
+              ]}
+            >
+              📍 {punto}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+
+    {error ? <Text style={styles.textoError}>{error}</Text> : null}
+
+    <Text style={styles.etiquetaSecundaria}>
+      Referencia exacta (opcional)
+    </Text>
+    <TextInput
+      value={referencia}
+      onChangeText={onChangeReferencia}
+      placeholder="Ej. Frente a fotocopiadora"
+      placeholderTextColor="rgba(169,178,208,0.5)"
+      style={styles.input}
+      maxLength={60}
+    />
+  </View>
+);
 
 const IMAGENES_POR_CATEGORIA: Record<CategoriaProducto, string> = {
   Comida:
@@ -79,10 +176,16 @@ export default function PerfilVendedorScreen() {
   const [regNombre, setRegNombre] = useState<string>('');
   const [regTelefono, setRegTelefono] = useState<string>('');
   const [regPin, setRegPin] = useState<string>('');
-  const [regPunto, setRegPunto] = useState<string>('');
+  const [regPunto, setRegPunto] = useState<string>(
+    PUNTOS_REFERENCIALES_UNIPAZ[0]
+  );
+  const [regReferencia, setRegReferencia] = useState<string>('');
   const [regDescripcion, setRegDescripcion] = useState<string>('');
+  const [regAceptaPolitica, setRegAceptaPolitica] = useState<boolean>(false);
   const [tocadoTelefonoReg, setTocadoTelefonoReg] = useState<boolean>(false);
   const [erroresReg, setErroresReg] = useState<ErroresRegistro>({});
+  const [modalPrivacidadVisible, setModalPrivacidadVisible] =
+    useState<boolean>(false);
 
   // Estado Modal Crear / Editar Producto (HU-02)
   const [modalProductoVisible, setModalProductoVisible] =
@@ -94,7 +197,10 @@ export default function PerfilVendedorScreen() {
   const [prodCategoria, setProdCategoria] =
     useState<CategoriaProducto>('Comida');
   const [prodPrecio, setProdPrecio] = useState<string>('');
-  const [prodUbicacion, setProdUbicacion] = useState<string>('');
+  const [prodUbicacion, setProdUbicacion] = useState<string>(
+    PUNTOS_REFERENCIALES_UNIPAZ[0]
+  );
+  const [prodReferencia, setProdReferencia] = useState<string>('');
   const [prodDescripcion, setProdDescripcion] = useState<string>('');
   const [prodImagenUrl, setProdImagenUrl] = useState<string>('');
   const [prodDisponible, setProdDisponible] = useState<boolean>(true);
@@ -103,7 +209,10 @@ export default function PerfilVendedorScreen() {
   // Estado Modal Editar Perfil Vendedor
   const [modalPerfilVisible, setModalPerfilVisible] = useState<boolean>(false);
   const [editNombre, setEditNombre] = useState<string>('');
-  const [editPunto, setEditPunto] = useState<string>('');
+  const [editPunto, setEditPunto] = useState<string>(
+    PUNTOS_REFERENCIALES_UNIPAZ[0]
+  );
+  const [editReferencia, setEditReferencia] = useState<string>('');
   const [editDescripcion, setEditDescripcion] = useState<string>('');
   const [editPin, setEditPin] = useState<string>('');
   const [errorEditPerfil, setErrorEditPerfil] = useState<string | null>(null);
@@ -239,7 +348,11 @@ export default function PerfilVendedorScreen() {
     }
     if (!regPunto.trim()) {
       nuevosErrores.puntoReferencial =
-        'Selecciona o escribe tu punto referencial en UNIPAZ.';
+        'Selecciona una zona oficial del campus UNIPAZ.';
+    }
+    if (!regAceptaPolitica) {
+      nuevosErrores.politica =
+        'Debes autorizar el tratamiento de datos (Ley 1581 de 2012) para registrarte.';
     }
 
     setErroresReg(nuevosErrores);
@@ -247,12 +360,14 @@ export default function PerfilVendedorScreen() {
       return;
     }
 
+    const ubicacionCompleta = combinarUbicacion(regPunto, regReferencia);
+
     try {
       const nuevoVendedor = await AuthService.registrarVendedor({
         nombre: regNombre,
         telefono: regTelefono,
         pin: regPin,
-        puntoReferencial: regPunto,
+        puntoReferencial: ubicacionCompleta,
         descripcion: regDescripcion,
       });
 
@@ -262,8 +377,10 @@ export default function PerfilVendedorScreen() {
       setRegNombre('');
       setRegTelefono('');
       setRegPin('');
-      setRegPunto('');
+      setRegPunto(PUNTOS_REFERENCIALES_UNIPAZ[0]);
+      setRegReferencia('');
       setRegDescripcion('');
+      setRegAceptaPolitica(false);
       setTocadoTelefonoReg(false);
       setErroresReg({});
     } catch (err: unknown) {
@@ -315,11 +432,15 @@ export default function PerfilVendedorScreen() {
     if (!vendedorActivo) {
       return;
     }
+    const { zona, referencia } = separarUbicacion(
+      vendedorActivo.puntoReferencial
+    );
     setProductoEditandoId(null);
     setProdNombre('');
     setProdCategoria('Comida');
     setProdPrecio('');
-    setProdUbicacion(vendedorActivo.puntoReferencial);
+    setProdUbicacion(zona);
+    setProdReferencia(referencia);
     setProdDescripcion('');
     setProdImagenUrl('');
     setProdDisponible(true);
@@ -328,11 +449,13 @@ export default function PerfilVendedorScreen() {
   };
 
   const abrirModalEditarProducto = (producto: Producto): void => {
+    const { zona, referencia } = separarUbicacion(producto.ubicacion);
     setProductoEditandoId(producto.id);
     setProdNombre(producto.nombre);
     setProdCategoria(producto.categoria);
     setProdPrecio(String(producto.precio));
-    setProdUbicacion(producto.ubicacion);
+    setProdUbicacion(zona);
+    setProdReferencia(referencia);
     setProdDescripcion(producto.descripcion);
     setProdImagenUrl(producto.imagenUrl);
     setProdDisponible(producto.disponible);
@@ -429,6 +552,7 @@ export default function PerfilVendedorScreen() {
 
     const imagenFinal =
       prodImagenUrl.trim() || IMAGENES_POR_CATEGORIA[prodCategoria];
+    const ubicacionFinal = combinarUbicacion(prodUbicacion, prodReferencia);
 
     try {
       if (productoEditandoId) {
@@ -436,7 +560,7 @@ export default function PerfilVendedorScreen() {
           nombre: prodNombre,
           categoria: prodCategoria,
           precio: precioNumero,
-          ubicacion: prodUbicacion,
+          ubicacion: ubicacionFinal,
           descripcion: prodDescripcion,
           imagenUrl: imagenFinal,
           disponible: prodDisponible,
@@ -446,7 +570,7 @@ export default function PerfilVendedorScreen() {
           nombre: prodNombre,
           categoria: prodCategoria,
           precio: precioNumero,
-          ubicacion: prodUbicacion,
+          ubicacion: ubicacionFinal,
           descripcion: prodDescripcion,
           imagenUrl: imagenFinal,
           disponible: prodDisponible,
@@ -490,8 +614,12 @@ export default function PerfilVendedorScreen() {
     if (!vendedorActivo) {
       return;
     }
+    const { zona, referencia } = separarUbicacion(
+      vendedorActivo.puntoReferencial
+    );
     setEditNombre(vendedorActivo.nombre);
-    setEditPunto(vendedorActivo.puntoReferencial);
+    setEditPunto(zona);
+    setEditReferencia(referencia);
     setEditDescripcion(vendedorActivo.descripcion);
     setEditPin('');
     setErrorEditPerfil(null);
@@ -501,7 +629,7 @@ export default function PerfilVendedorScreen() {
   const manejarGuardarEdicionPerfil = async (): Promise<void> => {
     if (!editNombre.trim() || !editPunto.trim()) {
       setErrorEditPerfil(
-        'El nombre del emprendimiento y el punto referencial son obligatorios.'
+        'El nombre del emprendimiento y la zona del campus son obligatorios.'
       );
       return;
     }
@@ -512,10 +640,12 @@ export default function PerfilVendedorScreen() {
       return;
     }
 
+    const ubicacionActualizada = combinarUbicacion(editPunto, editReferencia);
+
     try {
       const actualizado = await AuthService.actualizarPerfil({
         nombre: editNombre,
-        puntoReferencial: editPunto,
+        puntoReferencial: ubicacionActualizada,
         descripcion: editDescripcion,
         pin: editPin.trim() ? editPin.trim() : undefined,
       });
@@ -538,7 +668,94 @@ export default function PerfilVendedorScreen() {
           <ActivityIndicator size="large" color="#2FD27A" />
           <Text style={styles.textoCargando}>Cargando tu puesto...</Text>
         </View>
-      </SafeAreaView>
+        {/* =========================================================
+          MODAL 5: POLÍTICA DE PRIVACIDAD (LEY 1581 DE 2012)
+          ========================================================= */}
+      <Modal
+        visible={modalPrivacidadVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setModalPrivacidadVisible(false)}
+      >
+        <View style={styles.modalPrivacidadOverlay}>
+          <View style={styles.modalPrivacidadCard}>
+            <View style={styles.modalCabecera}>
+              <View style={styles.modalPrivacidadTituloFila}>
+                <Ionicons
+                  name="shield-checkmark"
+                  size={20}
+                  color="#2FD27A"
+                />
+                <Text style={styles.modalTitulo}>Política de Privacidad</Text>
+              </View>
+              <Pressable
+                onPress={() => setModalPrivacidadVisible(false)}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
+                <Ionicons name="close" size={24} color="#A9B2D0" />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.politicaSubtitulo}>
+                EcoVendedores · Capa8 Studio - UNIPAZ (Ley 1581 de 2012)
+              </Text>
+
+              <View style={styles.politicaSeccion}>
+                <Text style={styles.politicaTitulo}>
+                  1. Finalidad del Tratamiento de Datos
+                </Text>
+                <Text style={styles.politicaParrafo}>
+                  Los datos suministrados por los vendedores independientes
+                  (nombre o alias comercial, número de teléfono WhatsApp y zona
+                  referencial dentro del campus UNIPAZ) se utilizan única y
+                  exclusivamente para conectar compradores y vendedores dentro
+                  de la comunidad universitaria.
+                </Text>
+              </View>
+
+              <View style={styles.politicaSeccion}>
+                <Text style={styles.politicaTitulo}>
+                  2. Sin Rastreo ni Uso Comercial Externo
+                </Text>
+                <Text style={styles.politicaParrafo}>
+                  EcoVendedores no recopila coordenadas GPS continuas ni comparte,
+                  vende o cede tu información personal a terceros ajenos al
+                  ecosistema estudiantil de UNIPAZ.
+                </Text>
+              </View>
+
+              <View style={styles.politicaSeccion}>
+                <Text style={styles.politicaTitulo}>
+                  3. Derechos del Titular (Hábeas Data)
+                </Text>
+                <Text style={styles.politicaParrafo}>
+                  De acuerdo con la Ley 1581 de 2012 y el Decreto 1377 de 2013,
+                  como titular puedes conocer, actualizar, rectificar o eliminar
+                  tus productos, datos de contacto y cuenta en cualquier momento
+                  directamente desde el panel &quot;Mi Puesto&quot;.
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={() => setModalPrivacidadVisible(false)}
+                style={({ pressed }) => [
+                  styles.botonPrimario,
+                  pressed && styles.botonPresionado,
+                ]}
+                accessibilityRole="button"
+              >
+                <Text style={styles.textoBotonPrimario}>Entendido</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
     );
   }
 
@@ -841,68 +1058,22 @@ export default function PerfilVendedorScreen() {
                     ) : null}
                   </View>
 
-                  <View style={styles.grupoCampo}>
-                    <Text style={styles.etiqueta}>
-                      Punto de venta referencial en UNIPAZ{' '}
-                      <Text style={styles.obligatorio}>*</Text>
-                    </Text>
-                    <TextInput
-                      value={regPunto}
-                      onChangeText={(t) => {
-                        setRegPunto(t);
-                        if (erroresReg.puntoReferencial) {
-                          setErroresReg((prev) => ({
-                            ...prev,
-                            puntoReferencial: undefined,
-                          }));
-                        }
-                      }}
-                      placeholder="Ej. Cafetería Central, Bloque A..."
-                      placeholderTextColor="rgba(169,178,208,0.5)"
-                      style={[
-                        styles.input,
-                        Boolean(erroresReg.puntoReferencial) &&
-                          styles.inputError,
-                      ]}
-                      maxLength={80}
-                    />
-                    {erroresReg.puntoReferencial ? (
-                      <Text style={styles.textoError}>
-                        {erroresReg.puntoReferencial}
-                      </Text>
-                    ) : null}
-
-                    <View style={styles.sugerenciasContenedor}>
-                      {PUNTOS_REFERENCIALES_UNIPAZ.map((punto) => {
-                        const seleccionado = regPunto === punto;
-                        return (
-                          <Pressable
-                            key={punto}
-                            onPress={() => {
-                              setRegPunto(punto);
-                              setErroresReg((prev) => ({
-                                ...prev,
-                                puntoReferencial: undefined,
-                              }));
-                            }}
-                            style={[
-                              styles.chipUbicacion,
-                              seleccionado && styles.chipUbicacionActivo,
-                            ]}
-                          >
-                            <Text
-                              style={[
-                                styles.chipUbicacionTexto,
-                                seleccionado && styles.chipUbicacionTextoActivo,
-                              ]}
-                            >
-                              📍 {punto}
-                            </Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </View>
+                  <SelectorUbicacionCampus
+                    titulo="Zona oficial del campus UNIPAZ"
+                    zona={regPunto}
+                    onSelectZona={(nuevaZona) => {
+                      setRegPunto(nuevaZona);
+                      if (erroresReg.puntoReferencial) {
+                        setErroresReg((prev) => ({
+                          ...prev,
+                          puntoReferencial: undefined,
+                        }));
+                      }
+                    }}
+                    referencia={regReferencia}
+                    onChangeReferencia={setRegReferencia}
+                    error={erroresReg.puntoReferencial}
+                  />
 
                   <View style={styles.grupoCampo}>
                     <Text style={styles.etiqueta}>
@@ -919,6 +1090,59 @@ export default function PerfilVendedorScreen() {
                       style={[styles.input, styles.inputMultilinea]}
                       maxLength={220}
                     />
+                  </View>
+
+                  {/* Checkbox obligatorio Ley 1581 de 2012 */}
+                  <View style={styles.grupoCampo}>
+                    <Pressable
+                      onPress={() => {
+                        setRegAceptaPolitica((prev) => !prev);
+                        if (erroresReg.politica) {
+                          setErroresReg((prev) => ({
+                            ...prev,
+                            politica: undefined,
+                          }));
+                        }
+                      }}
+                      style={styles.checkboxFila}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked: regAceptaPolitica }}
+                    >
+                      <View
+                        style={[
+                          styles.checkboxCaja,
+                          regAceptaPolitica && styles.checkboxCajaActiva,
+                          Boolean(erroresReg.politica) && styles.inputError,
+                        ]}
+                      >
+                        {regAceptaPolitica ? (
+                          <Ionicons
+                            name="checkmark"
+                            size={15}
+                            color="#EEF1FA"
+                          />
+                        ) : null}
+                      </View>
+                      <Text style={styles.checkboxTexto}>
+                        Autorizo el tratamiento de mis datos personales (nombre
+                        y teléfono WhatsApp) conforme a la{' '}
+                        <Text
+                          style={styles.enlacePolitica}
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            setModalPrivacidadVisible(true);
+                          }}
+                        >
+                          Ley 1581 de 2012
+                        </Text>{' '}
+                        para contacto comercial en UNIPAZ.
+                      </Text>
+                    </Pressable>
+                    {erroresReg.politica ? (
+                      <Text style={styles.textoError}>
+                        {erroresReg.politica}
+                      </Text>
+                    ) : null}
                   </View>
 
                   <Pressable
@@ -1172,6 +1396,23 @@ export default function PerfilVendedorScreen() {
               )}
             </View>
           )}
+
+          {/* Enlace discreto a Política de Privacidad (Ley 1581 de 2012) */}
+          <Pressable
+            onPress={() => setModalPrivacidadVisible(true)}
+            style={styles.piePrivacidad}
+            accessibilityRole="button"
+            accessibilityLabel="Ver Política de Privacidad y Tratamiento de Datos"
+          >
+            <Ionicons
+              name="shield-checkmark-outline"
+              size={14}
+              color="#A9B2D0"
+            />
+            <Text style={styles.piePrivacidadTexto}>
+              Política de Privacidad · Ley 1581 de 2012 (Capa8 Studio - UNIPAZ)
+            </Text>
+          </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
 
@@ -1358,65 +1599,22 @@ export default function PerfilVendedorScreen() {
               </View>
 
               {/* Ubicación Referencial */}
-              <View style={styles.grupoCampo}>
-                <Text style={styles.etiqueta}>
-                  Ubicación referencial de entrega{' '}
-                  <Text style={styles.obligatorio}>*</Text>
-                </Text>
-                <TextInput
-                  value={prodUbicacion}
-                  onChangeText={(t) => {
-                    setProdUbicacion(t);
-                    if (erroresProd.ubicacion) {
-                      setErroresProd((prev) => ({
-                        ...prev,
-                        ubicacion: undefined,
-                      }));
-                    }
-                  }}
-                  placeholder="Ej. Cafetería Central"
-                  placeholderTextColor="rgba(169,178,208,0.5)"
-                  style={[
-                    styles.input,
-                    Boolean(erroresProd.ubicacion) && styles.inputError,
-                  ]}
-                  maxLength={80}
-                />
-                {erroresProd.ubicacion ? (
-                  <Text style={styles.textoError}>{erroresProd.ubicacion}</Text>
-                ) : null}
-
-                <View style={styles.sugerenciasContenedor}>
-                  {PUNTOS_REFERENCIALES_UNIPAZ.map((punto) => {
-                    const seleccionado = prodUbicacion === punto;
-                    return (
-                      <Pressable
-                        key={punto}
-                        onPress={() => {
-                          setProdUbicacion(punto);
-                          setErroresProd((prev) => ({
-                            ...prev,
-                            ubicacion: undefined,
-                          }));
-                        }}
-                        style={[
-                          styles.chipUbicacion,
-                          seleccionado && styles.chipUbicacionActivo,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.chipUbicacionTexto,
-                            seleccionado && styles.chipUbicacionTextoActivo,
-                          ]}
-                        >
-                          📍 {punto}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
+              <SelectorUbicacionCampus
+                titulo="Ubicación referencial de entrega"
+                zona={prodUbicacion}
+                onSelectZona={(nuevaZona) => {
+                  setProdUbicacion(nuevaZona);
+                  if (erroresProd.ubicacion) {
+                    setErroresProd((prev) => ({
+                      ...prev,
+                      ubicacion: undefined,
+                    }));
+                  }
+                }}
+                referencia={prodReferencia}
+                onChangeReferencia={setProdReferencia}
+                error={erroresProd.ubicacion}
+              />
 
               {/* Descripción Detallada */}
               <View style={styles.grupoCampo}>
@@ -1530,42 +1728,13 @@ export default function PerfilVendedorScreen() {
                 />
               </View>
 
-              <View style={styles.grupoCampo}>
-                <Text style={styles.etiqueta}>
-                  Punto referencial en UNIPAZ{' '}
-                  <Text style={styles.obligatorio}>*</Text>
-                </Text>
-                <TextInput
-                  value={editPunto}
-                  onChangeText={setEditPunto}
-                  style={styles.input}
-                  maxLength={80}
-                />
-                <View style={styles.sugerenciasContenedor}>
-                  {PUNTOS_REFERENCIALES_UNIPAZ.map((punto) => {
-                    const seleccionado = editPunto === punto;
-                    return (
-                      <Pressable
-                        key={punto}
-                        onPress={() => setEditPunto(punto)}
-                        style={[
-                          styles.chipUbicacion,
-                          seleccionado && styles.chipUbicacionActivo,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.chipUbicacionTexto,
-                            seleccionado && styles.chipUbicacionTextoActivo,
-                          ]}
-                        >
-                          📍 {punto}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              </View>
+              <SelectorUbicacionCampus
+                titulo="Zona oficial del campus UNIPAZ"
+                zona={editPunto}
+                onSelectZona={setEditPunto}
+                referencia={editReferencia}
+                onChangeReferencia={setEditReferencia}
+              />
 
               <View style={styles.grupoCampo}>
                 <Text style={styles.etiqueta}>
@@ -1615,6 +1784,93 @@ export default function PerfilVendedorScreen() {
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
+      </Modal>
+      {/* =========================================================
+          MODAL 5: POLÍTICA DE PRIVACIDAD (LEY 1581 DE 2012)
+          ========================================================= */}
+      <Modal
+        visible={modalPrivacidadVisible}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setModalPrivacidadVisible(false)}
+      >
+        <View style={styles.modalPrivacidadOverlay}>
+          <View style={styles.modalPrivacidadCard}>
+            <View style={styles.modalCabecera}>
+              <View style={styles.modalPrivacidadTituloFila}>
+                <Ionicons
+                  name="shield-checkmark"
+                  size={20}
+                  color="#2FD27A"
+                />
+                <Text style={styles.modalTitulo}>Política de Privacidad</Text>
+              </View>
+              <Pressable
+                onPress={() => setModalPrivacidadVisible(false)}
+                hitSlop={8}
+                accessibilityRole="button"
+              >
+                <Ionicons name="close" size={24} color="#A9B2D0" />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={styles.modalScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <Text style={styles.politicaSubtitulo}>
+                EcoVendedores · Capa8 Studio - UNIPAZ (Ley 1581 de 2012)
+              </Text>
+
+              <View style={styles.politicaSeccion}>
+                <Text style={styles.politicaTitulo}>
+                  1. Finalidad del Tratamiento de Datos
+                </Text>
+                <Text style={styles.politicaParrafo}>
+                  Los datos suministrados por los vendedores independientes
+                  (nombre o alias comercial, número de teléfono WhatsApp y zona
+                  referencial dentro del campus UNIPAZ) se utilizan única y
+                  exclusivamente para conectar compradores y vendedores dentro
+                  de la comunidad universitaria.
+                </Text>
+              </View>
+
+              <View style={styles.politicaSeccion}>
+                <Text style={styles.politicaTitulo}>
+                  2. Sin Rastreo ni Uso Comercial Externo
+                </Text>
+                <Text style={styles.politicaParrafo}>
+                  EcoVendedores no recopila coordenadas GPS continuas ni comparte,
+                  vende o cede tu información personal a terceros ajenos al
+                  ecosistema estudiantil de UNIPAZ.
+                </Text>
+              </View>
+
+              <View style={styles.politicaSeccion}>
+                <Text style={styles.politicaTitulo}>
+                  3. Derechos del Titular (Hábeas Data)
+                </Text>
+                <Text style={styles.politicaParrafo}>
+                  De acuerdo con la Ley 1581 de 2012 y el Decreto 1377 de 2013,
+                  como titular puedes conocer, actualizar, rectificar o eliminar
+                  tus productos, datos de contacto y cuenta en cualquier momento
+                  directamente desde el panel &quot;Mi Puesto&quot;.
+                </Text>
+              </View>
+
+              <Pressable
+                onPress={() => setModalPrivacidadVisible(false)}
+                style={({ pressed }) => [
+                  styles.botonPrimario,
+                  pressed && styles.botonPresionado,
+                ]}
+                accessibilityRole="button"
+              >
+                <Text style={styles.textoBotonPrimario}>Entendido</Text>
+              </Pressable>
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -2231,5 +2487,101 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '700',
     color: '#EEF1FA',
+  },
+  etiquetaSecundaria: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#A9B2D0',
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  checkboxFila: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  checkboxCaja: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: 'rgba(160,172,220,0.45)',
+    backgroundColor: '#0E1330',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 1,
+    flexShrink: 0,
+  },
+  checkboxCajaActiva: {
+    backgroundColor: '#00963F',
+    borderColor: '#2FD27A',
+  },
+  checkboxTexto: {
+    flex: 1,
+    fontSize: 12,
+    color: '#A9B2D0',
+    lineHeight: 18,
+  },
+  enlacePolitica: {
+    color: '#2FD27A',
+    fontWeight: '700',
+    textDecorationLine: 'underline',
+  },
+  piePrivacidad: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 20,
+    paddingVertical: 10,
+  },
+  piePrivacidadTexto: {
+    fontSize: 11.5,
+    color: '#A9B2D0',
+    textDecorationLine: 'underline',
+  },
+  modalPrivacidadOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(6, 9, 24, 0.85)',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  modalPrivacidadCard: {
+    backgroundColor: '#131938',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(160,172,220,0.22)',
+    maxHeight: '82%',
+    overflow: 'hidden',
+  },
+  modalPrivacidadTituloFila: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  politicaSubtitulo: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#2FD27A',
+    marginBottom: 14,
+  },
+  politicaSeccion: {
+    backgroundColor: '#0E1330',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(160,172,220,0.15)',
+    padding: 12,
+    marginBottom: 12,
+  },
+  politicaTitulo: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#EEF1FA',
+    marginBottom: 4,
+  },
+  politicaParrafo: {
+    fontSize: 12.5,
+    color: '#A9B2D0',
+    lineHeight: 18.5,
   },
 });

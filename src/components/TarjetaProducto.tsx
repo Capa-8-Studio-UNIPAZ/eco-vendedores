@@ -25,6 +25,28 @@ export function formatearPrecioCOP(valor: number): string {
   return `$${miles} COP`;
 }
 
+export async function abrirWhatsAppProducto(producto: Producto): Promise<void> {
+  const telefonoLimpio = (producto.telefonoVendedor || '3101234567').replace(
+    /\D/g,
+    ''
+  );
+  const mensaje = `Hola ${producto.vendedor}, vi tu producto "${producto.nombre}" (${formatearPrecioCOP(
+    producto.precio
+  )}) en la app EcoVendedores UNIPAZ (ubicado en ${producto.ubicacion}). ¿Aún tienes disponible?`;
+  const url = `https://wa.me/57${telefonoLimpio}?text=${encodeURIComponent(
+    mensaje
+  )}`;
+
+  try {
+    await Linking.openURL(url);
+  } catch {
+    Alert.alert(
+      'Contacto con el vendedor',
+      `No se pudo abrir WhatsApp automáticamente. Puedes escribir al +57 ${telefonoLimpio} (${producto.vendedor} en ${producto.ubicacion}).`
+    );
+  }
+}
+
 export const TarjetaProducto: React.FC<TarjetaProductoProps> = ({
   producto,
   onPress,
@@ -33,25 +55,7 @@ export const TarjetaProducto: React.FC<TarjetaProductoProps> = ({
   const [errorImagen, setErrorImagen] = useState<boolean>(false);
 
   const abrirWhatsAppDirecto = async (): Promise<void> => {
-    const telefonoLimpio = (producto.telefonoVendedor || '3101234567').replace(
-      /\D/g,
-      ''
-    );
-    const mensaje = encodeURIComponent(
-      `Hola ${producto.vendedor}, vi "${producto.nombre}" (${formatearPrecioCOP(
-        producto.precio
-      )}) en EcoVendedores UNIPAZ (📍 ${producto.ubicacion}). ¿Sigue disponible?`
-    );
-    const url = `https://wa.me/57${telefonoLimpio}?text=${mensaje}`;
-
-    try {
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert(
-        'Contacto con el vendedor',
-        `No se pudo abrir WhatsApp automáticamente. Puedes escribir al +57 ${telefonoLimpio} (${producto.vendedor} en ${producto.ubicacion}).`
-      );
-    }
+    await abrirWhatsAppProducto(producto);
   };
 
   const manejarPressTarjeta = (): void => {

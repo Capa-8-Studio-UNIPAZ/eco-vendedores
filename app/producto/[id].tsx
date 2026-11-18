@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Image,
-  Linking,
   Pressable,
   ScrollView,
   Share,
@@ -14,7 +13,10 @@ import {
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
-import { formatearPrecioCOP } from '@/components/TarjetaProducto';
+import {
+  abrirWhatsAppProducto,
+  formatearPrecioCOP,
+} from '@/components/TarjetaProducto';
 import {
   AuthService,
   RepositorioProductos,
@@ -70,25 +72,7 @@ export default function DetalleProductoScreen() {
       return;
     }
 
-    const telefonoLimpio = (producto.telefonoVendedor || '3101234567').replace(
-      /\D/g,
-      ''
-    );
-    const mensaje = encodeURIComponent(
-      `Hola ${producto.vendedor}, te escribo desde EcoVendedores UNIPAZ. Quiero pedir "${producto.nombre}" por ${formatearPrecioCOP(
-        producto.precio
-      )} (📍 Punto de entrega: ${producto.ubicacion}). ¿Me confirmas disponibilidad?`
-    );
-    const url = `https://wa.me/57${telefonoLimpio}?text=${mensaje}`;
-
-    try {
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert(
-        'No se pudo abrir WhatsApp',
-        `Puedes comunicarte directamente con ${producto.vendedor} al número +57 ${telefonoLimpio} en ${producto.ubicacion}.`
-      );
-    }
+    await abrirWhatsAppProducto(producto);
   };
 
   const manejarCompartir = async (): Promise<void> => {

@@ -17,10 +17,12 @@ export const CATEGORIAS_OFICIALES: CategoriaProducto[] = [
 
 export const PUNTOS_REFERENCIALES_UNIPAZ: string[] = [
   'Cafetería Central',
+  'Plazoleta Bloque B',
   'Bloque A',
   'Canchas Polideportivas',
-  'Plazoleta Bloque B',
   'Biblioteca',
+  'Laboratorios / Talleres',
+  'Entrada Principal',
 ];
 
 export interface Producto {
