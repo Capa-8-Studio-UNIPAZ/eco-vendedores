@@ -75,6 +75,33 @@ export default function CatalogoScreen() {
   useEffect(() => {
     let cancelado = false;
 
+    if (escenario === 'conDatos') {
+      const unsubscribe = RepositorioProductos.suscribirseProductos(
+        (resultado) => {
+          if (cancelado) {
+            return;
+          }
+          setProductos(resultado);
+          setMensajeError(null);
+          setCargando(false);
+          setRefrescando(false);
+        },
+        (err) => {
+          if (cancelado) {
+            return;
+          }
+          setMensajeError(err.message);
+          setCargando(false);
+          setRefrescando(false);
+        }
+      );
+
+      return () => {
+        cancelado = true;
+        unsubscribe();
+      };
+    }
+
     RepositorioProductos.obtenerProductos(escenario)
       .then((resultado) => {
         if (cancelado) {

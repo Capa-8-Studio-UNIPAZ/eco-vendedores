@@ -1,5 +1,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+  updateDoc,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
 
+import { db } from '@/config/firebase';
 import {
   ActualizarPerfilInput,
   ActualizarProductoInput,
@@ -14,6 +29,11 @@ const STORAGE_KEYS = {
   PRODUCTOS: '@ecovendedores_unipaz:productos_v2',
   VENDEDORES: '@ecovendedores_unipaz:vendedores_v2',
   SESION_ACTIVA: '@ecovendedores_unipaz:sesion_v2',
+} as const;
+
+const COLLECTIONS = {
+  PRODUCTOS: 'productos',
+  VENDEDORES: 'vendedores',
 } as const;
 
 export const VENDEDOR_SEMILLA_ROSAURA: VendedorUsuario = {
@@ -145,10 +165,11 @@ export const PRODUCTOS_MOCK: Producto[] = [
 ];
 
 let escenarioActivo: EscenarioSimulado = 'conDatos';
-let inicializado = false;
+let semillaLocalLista = false;
+let semillaFirestorePromise: Promise<void> | null = null;
 
-async function asegurarSemillaInicial(): Promise<void> {
-  if (inicializado) {
+async function asegurarSemillaLocal(): Promise<void> {
+  if (semillaLocalLista) {
     return;
   }
 
@@ -172,14 +193,14 @@ async function asegurarSemillaInicial(): Promise<void> {
       );
     }
 
-    inicializado = true;
+    semillaLocalLista = true;
   } catch {
-    // En caso de error de almacenamiento, operamos con los arreglos semilla
+    // Operar con los arreglos semilla en memoria si falla AsyncStorage
   }
 }
 
-async function leerProductosGuardados(): Promise<Producto[]> {
-  await asegurarSemillaInicial();
+async function leerProductosLocales(): Promise<Producto[]> {
+  await asegurarSemillaLocal();
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.PRODUCTOS);
     if (!raw) {
@@ -195,12 +216,19 @@ async function leerProductosGuardados(): Promise<Producto[]> {
   }
 }
 
-async function guardarProductos(productos: Producto[]): Promise<void> {
-  await AsyncStorage.setItem(STORAGE_KEYS.PRODUCTOS, JSON.stringify(productos));
+async function guardarProductosLocales(productos: Producto[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      STORAGE_KEYS.PRODUCTOS,
+      JSON.stringify(productos)
+    );
+  } catch {
+    // Silenciar error de caché local
+  }
 }
 
-async function leerVendedoresGuardados(): Promise<VendedorUsuario[]> {
-  await asegurarSemillaInicial();
+async function leerVendedoresLocales(): Promise<VendedorUsuario[]> {
+  await asegurarSemillaLocal();
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEYS.VENDEDORES);
     if (!raw) {
@@ -216,11 +244,59 @@ async function leerVendedoresGuardados(): Promise<VendedorUsuario[]> {
   }
 }
 
-async function guardarVendedores(vendedores: VendedorUsuario[]): Promise<void> {
-  await AsyncStorage.setItem(
-    STORAGE_KEYS.VENDEDORES,
-    JSON.stringify(vendedores)
-  );
+async function guardarVendedoresLocales(
+  vendedores: VendedorUsuario[]
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      STORAGE_KEYS.VENDEDORES,
+      JSON.stringify(vendedores)
+    );
+  } catch {
+    // Silenciar error de caché local
+  }
+}
+
+async function asegurarSemillaFirestore(): Promise<void> {
+  if (semillaFirestorePromise) {
+    return semillaFirestorePromise;
+  }
+
+  semillaFirestorePromise = (async () => {
+    try {
+      const [prodSnap, vendSnap] = await Promise.all([
+        getDocs(collection(db, COLLECTIONS.PRODUCTOS)),
+        getDocs(collection(db, COLLECTIONS.VENDEDORES)),
+      ]);
+
+      const batch = writeBatch(db);
+      let hayEscrituras = false;
+
+      if (vendSnap.empty) {
+        for (const v of VENDEDORES_SEMILLA) {
+          batch.set(doc(db, COLLECTIONS.VENDEDORES, v.id), v);
+        }
+        hayEscrituras = true;
+      }
+
+      if (prodSnap.empty) {
+        for (const p of PRODUCTOS_MOCK) {
+          batch.set(doc(db, COLLECTIONS.PRODUCTOS, p.id), p);
+        }
+        hayEscrituras = true;
+      }
+
+      if (hayEscrituras) {
+        await batch.commit();
+      }
+    } catch {
+      // Si no hay red o Firestore aún no tiene permisos, fallback a AsyncStorage
+    } finally {
+      semillaFirestorePromise = null;
+    }
+  })();
+
+  return semillaFirestorePromise;
 }
 
 export class RepositorioProductos {
@@ -240,6 +316,46 @@ export class RepositorioProductos {
     return RepositorioProductos.getEscenario();
   }
 
+  static suscribirseProductos(
+    onDatos: (productos: Producto[]) => void,
+    onError?: (error: Error) => void
+  ): () => void {
+    let intentoSemilla = false;
+    const consulta = query(
+      collection(db, COLLECTIONS.PRODUCTOS),
+      orderBy('creadoEn', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(
+      consulta,
+      (snapshot) => {
+        if (snapshot.empty && !intentoSemilla) {
+          intentoSemilla = true;
+          void asegurarSemillaFirestore();
+          return;
+        }
+
+        const productos = snapshot.docs.map(
+          (documento) => documento.data() as Producto
+        );
+        void guardarProductosLocales(productos);
+        onDatos(productos);
+      },
+      async () => {
+        try {
+          const locales = await leerProductosLocales();
+          onDatos(locales);
+        } catch {
+          if (onError) {
+            onError(new Error('Error de conexión con el catálogo de UNIPAZ'));
+          }
+        }
+      }
+    );
+
+    return unsubscribe;
+  }
+
   static obtenerProductos(escenario?: EscenarioSimulado): Promise<Producto[]> {
     const escenarioEvaluar = escenario ?? escenarioActivo;
 
@@ -253,26 +369,42 @@ export class RepositorioProductos {
       });
     }
 
-    return new Promise<Producto[]>((resolve, reject) => {
-      setTimeout(async () => {
-        if (escenarioEvaluar === 'falla') {
+    if (escenarioEvaluar === 'falla') {
+      return new Promise<Producto[]>((_, reject) => {
+        setTimeout(() => {
           reject(new Error('Error de conexión con el catálogo de UNIPAZ'));
-          return;
-        }
+        }, 450);
+      });
+    }
 
-        if (escenarioEvaluar === 'vacio') {
+    if (escenarioEvaluar === 'vacio') {
+      return new Promise<Producto[]>((resolve) => {
+        setTimeout(() => {
           resolve([]);
-          return;
-        }
+        }, 450);
+      });
+    }
 
-        try {
-          const productos = await leerProductosGuardados();
-          resolve(productos);
-        } catch {
-          reject(new Error('Error al leer el catálogo local de UNIPAZ'));
+    return (async () => {
+      try {
+        await asegurarSemillaFirestore();
+        const consulta = query(
+          collection(db, COLLECTIONS.PRODUCTOS),
+          orderBy('creadoEn', 'desc')
+        );
+        const snap = await getDocs(consulta);
+        const productos = snap.docs.map(
+          (documento) => documento.data() as Producto
+        );
+        if (productos.length > 0) {
+          await guardarProductosLocales(productos);
+          return productos;
         }
-      }, 450);
-    });
+      } catch {
+        // Resiliencia offline: caer a caché local en AsyncStorage
+      }
+      return leerProductosLocales();
+    })();
   }
 
   obtenerProductos(escenario?: EscenarioSimulado): Promise<Producto[]> {
@@ -280,8 +412,17 @@ export class RepositorioProductos {
   }
 
   static async obtenerProductoPorId(id: string): Promise<Producto | null> {
-    const productos = await leerProductosGuardados();
-    const encontrado = productos.find((item) => item.id === id);
+    try {
+      const snap = await getDoc(doc(db, COLLECTIONS.PRODUCTOS, id));
+      if (snap.exists()) {
+        return snap.data() as Producto;
+      }
+    } catch {
+      // Fallback a caché local si está offline
+    }
+
+    const locales = await leerProductosLocales();
+    const encontrado = locales.find((item) => item.id === id);
     return encontrado ? { ...encontrado } : null;
   }
 
@@ -292,13 +433,23 @@ export class RepositorioProductos {
   static async obtenerProductosPorVendedor(
     vendedorId: string
   ): Promise<Producto[]> {
-    const productos = await leerProductosGuardados();
-    return productos.filter((item) => item.vendedorId === vendedorId);
+    try {
+      const consulta = query(
+        collection(db, COLLECTIONS.PRODUCTOS),
+        where('vendedorId', '==', vendedorId)
+      );
+      const snap = await getDocs(consulta);
+      const lista = snap.docs
+        .map((documento) => documento.data() as Producto)
+        .sort((a, b) => b.creadoEn - a.creadoEn);
+      return lista;
+    } catch {
+      const locales = await leerProductosLocales();
+      return locales.filter((item) => item.vendedorId === vendedorId);
+    }
   }
 
   static async crearProducto(nuevo: NuevoProductoInput): Promise<Producto> {
-    const productos = await leerProductosGuardados();
-
     const productoCreado: Producto = {
       id: `prod-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       nombre: nuevo.nombre.trim(),
@@ -314,8 +465,17 @@ export class RepositorioProductos {
       creadoEn: Date.now(),
     };
 
-    const actualizados = [productoCreado, ...productos];
-    await guardarProductos(actualizados);
+    try {
+      await setDoc(
+        doc(db, COLLECTIONS.PRODUCTOS, productoCreado.id),
+        productoCreado
+      );
+    } catch {
+      // Si está sin red, al menos persistir localmente
+    }
+
+    const locales = await leerProductosLocales();
+    await guardarProductosLocales([productoCreado, ...locales]);
     return productoCreado;
   }
 
@@ -323,14 +483,12 @@ export class RepositorioProductos {
     id: string,
     datos: ActualizarProductoInput
   ): Promise<Producto> {
-    const productos = await leerProductosGuardados();
-    const indice = productos.findIndex((item) => item.id === id);
+    const actual = await RepositorioProductos.obtenerProductoPorId(id);
 
-    if (indice === -1) {
+    if (!actual) {
       throw new Error(`No se encontró el producto con id "${id}"`);
     }
 
-    const actual = productos[indice];
     const actualizado: Producto = {
       ...actual,
       nombre:
@@ -355,32 +513,64 @@ export class RepositorioProductos {
           : actual.imagenUrl,
     };
 
-    productos[indice] = actualizado;
-    await guardarProductos(productos);
+    try {
+      await updateDoc(doc(db, COLLECTIONS.PRODUCTOS, id), {
+        nombre: actualizado.nombre,
+        descripcion: actualizado.descripcion,
+        precio: actualizado.precio,
+        categoria: actualizado.categoria,
+        ubicacion: actualizado.ubicacion,
+        disponible: actualizado.disponible,
+        imagenUrl: actualizado.imagenUrl,
+      });
+    } catch {
+      // Fallback local
+    }
+
+    const locales = await leerProductosLocales();
+    const actualizadosLocales = locales.map((item) =>
+      item.id === id ? actualizado : item
+    );
+    await guardarProductosLocales(actualizadosLocales);
     return { ...actualizado };
   }
 
   static async eliminarProducto(id: string): Promise<void> {
-    const productos = await leerProductosGuardados();
-    const filtrados = productos.filter((item) => item.id !== id);
-    await guardarProductos(filtrados);
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.PRODUCTOS, id));
+    } catch {
+      // Fallback local
+    }
+
+    const locales = await leerProductosLocales();
+    await guardarProductosLocales(locales.filter((item) => item.id !== id));
   }
 
   static async conmutarDisponibilidad(id: string): Promise<Producto> {
-    const productos = await leerProductosGuardados();
-    const indice = productos.findIndex((item) => item.id === id);
+    const actual = await RepositorioProductos.obtenerProductoPorId(id);
 
-    if (indice === -1) {
+    if (!actual) {
       throw new Error(`No se encontró el producto con id "${id}"`);
     }
 
+    const nuevoEstado = !actual.disponible;
     const actualizado: Producto = {
-      ...productos[indice],
-      disponible: !productos[indice].disponible,
+      ...actual,
+      disponible: nuevoEstado,
     };
 
-    productos[indice] = actualizado;
-    await guardarProductos(productos);
+    try {
+      await updateDoc(doc(db, COLLECTIONS.PRODUCTOS, id), {
+        disponible: nuevoEstado,
+      });
+    } catch {
+      // Fallback local
+    }
+
+    const locales = await leerProductosLocales();
+    await guardarProductosLocales(
+      locales.map((item) => (item.id === id ? actualizado : item))
+    );
     return { ...actualizado };
   }
 
@@ -389,8 +579,21 @@ export class RepositorioProductos {
   }
 
   static async restaurarDatosSemilla(): Promise<Producto[]> {
-    await guardarVendedores(VENDEDORES_SEMILLA);
-    await guardarProductos(PRODUCTOS_MOCK);
+    try {
+      const batch = writeBatch(db);
+      for (const v of VENDEDORES_SEMILLA) {
+        batch.set(doc(db, COLLECTIONS.VENDEDORES, v.id), v);
+      }
+      for (const p of PRODUCTOS_MOCK) {
+        batch.set(doc(db, COLLECTIONS.PRODUCTOS, p.id), p);
+      }
+      await batch.commit();
+    } catch {
+      // Continuar con restauración local
+    }
+
+    await guardarVendedoresLocales(VENDEDORES_SEMILLA);
+    await guardarProductosLocales(PRODUCTOS_MOCK);
     escenarioActivo = 'conDatos';
     return PRODUCTOS_MOCK.map((p) => ({ ...p }));
   }
@@ -403,13 +606,28 @@ export class AuthService {
   ): Promise<VendedorUsuario> {
     const telefonoLimpio = telefono.trim();
     const pinLimpio = pin.trim();
-    const vendedores = await leerVendedoresGuardados();
+    let vendedor: VendedorUsuario | undefined;
 
-    const vendedor = vendedores.find(
-      (v) => v.telefono === telefonoLimpio && v.pin === pinLimpio
-    );
+    try {
+      await asegurarSemillaFirestore();
+      const consulta = query(
+        collection(db, COLLECTIONS.VENDEDORES),
+        where('telefono', '==', telefonoLimpio)
+      );
+      const snap = await getDocs(consulta);
+      if (!snap.empty) {
+        vendedor = snap.docs[0].data() as VendedorUsuario;
+      }
+    } catch {
+      // Fallback offline a caché local
+    }
 
     if (!vendedor) {
+      const vendedoresLocales = await leerVendedoresLocales();
+      vendedor = vendedoresLocales.find((v) => v.telefono === telefonoLimpio);
+    }
+
+    if (!vendedor || vendedor.pin !== pinLimpio) {
       throw new Error(
         'Teléfono o PIN incorrecto. Verifica tus datos o usa el acceso de demostración.'
       );
@@ -426,17 +644,29 @@ export class AuthService {
     datos: RegistroVendedorInput
   ): Promise<VendedorUsuario> {
     const telefonoLimpio = datos.telefono.trim();
-    const vendedores = await leerVendedoresGuardados();
+    let yaExiste = false;
 
-    const existente = vendedores.find((v) => v.telefono === telefonoLimpio);
-    if (existente) {
+    try {
+      await asegurarSemillaFirestore();
+      const consulta = query(
+        collection(db, COLLECTIONS.VENDEDORES),
+        where('telefono', '==', telefonoLimpio)
+      );
+      const snap = await getDocs(consulta);
+      yaExiste = !snap.empty;
+    } catch {
+      const locales = await leerVendedoresLocales();
+      yaExiste = locales.some((v) => v.telefono === telefonoLimpio);
+    }
+
+    if (yaExiste) {
       throw new Error(
         'Ya existe un vendedor registrado con este número de teléfono. Inicia sesión con tu PIN.'
       );
     }
 
     const nuevoVendedor: VendedorUsuario = {
-      id: `vend-${Date.now()}`,
+      id: `vend-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       nombre: datos.nombre.trim(),
       telefono: telefonoLimpio,
       pin: datos.pin.trim(),
@@ -447,8 +677,17 @@ export class AuthService {
       puestoAbierto: true,
     };
 
-    const actualizados = [...vendedores, nuevoVendedor];
-    await guardarVendedores(actualizados);
+    try {
+      await setDoc(
+        doc(db, COLLECTIONS.VENDEDORES, nuevoVendedor.id),
+        nuevoVendedor
+      );
+    } catch {
+      // Continuar con guardado local si está offline
+    }
+
+    const locales = await leerVendedoresLocales();
+    await guardarVendedoresLocales([...locales, nuevoVendedor]);
     await AsyncStorage.setItem(
       STORAGE_KEYS.SESION_ACTIVA,
       JSON.stringify(nuevoVendedor)
@@ -458,7 +697,7 @@ export class AuthService {
   }
 
   static async obtenerSesionActiva(): Promise<VendedorUsuario | null> {
-    await asegurarSemillaInicial();
+    await asegurarSemillaLocal();
     try {
       const raw = await AsyncStorage.getItem(STORAGE_KEYS.SESION_ACTIVA);
       if (!raw) {
@@ -468,9 +707,22 @@ export class AuthService {
       if (!sesion || !sesion.id) {
         return null;
       }
-      const vendedores = await leerVendedoresGuardados();
-      const actualizado = vendedores.find((v) => v.id === sesion.id);
-      return actualizado ? { ...actualizado } : sesion;
+
+      try {
+        const snap = await getDoc(doc(db, COLLECTIONS.VENDEDORES, sesion.id));
+        if (snap.exists()) {
+          const remoto = snap.data() as VendedorUsuario;
+          await AsyncStorage.setItem(
+            STORAGE_KEYS.SESION_ACTIVA,
+            JSON.stringify(remoto)
+          );
+          return remoto;
+        }
+      } catch {
+        // Offline: devolver sesión local
+      }
+
+      return sesion;
     } catch {
       return null;
     }
@@ -479,7 +731,16 @@ export class AuthService {
   static async obtenerVendedorPorId(
     id: string
   ): Promise<VendedorUsuario | null> {
-    const vendedores = await leerVendedoresGuardados();
+    try {
+      const snap = await getDoc(doc(db, COLLECTIONS.VENDEDORES, id));
+      if (snap.exists()) {
+        return snap.data() as VendedorUsuario;
+      }
+    } catch {
+      // Fallback a caché local
+    }
+
+    const vendedores = await leerVendedoresLocales();
     const encontrado = vendedores.find((v) => v.id === id);
     return encontrado ? { ...encontrado } : null;
   }
@@ -492,47 +753,53 @@ export class AuthService {
       throw new Error('No hay una sesión de vendedor activa.');
     }
 
-    const vendedores = await leerVendedoresGuardados();
-    const indice = vendedores.findIndex((v) => v.id === sesion.id);
-    if (indice === -1) {
-      throw new Error('No se encontró el registro del vendedor.');
-    }
-
     const actualizado: VendedorUsuario = {
-      ...vendedores[indice],
+      ...sesion,
       nombre: datos.nombre.trim(),
       puntoReferencial: datos.puntoReferencial.trim(),
       descripcion: datos.descripcion.trim(),
       pin:
         datos.pin && datos.pin.trim().length >= 4
           ? datos.pin.trim()
-          : vendedores[indice].pin,
+          : sesion.pin,
     };
 
-    vendedores[indice] = actualizado;
-    await guardarVendedores(vendedores);
+    try {
+      await setDoc(doc(db, COLLECTIONS.VENDEDORES, actualizado.id), actualizado);
+
+      const consultaProd = query(
+        collection(db, COLLECTIONS.PRODUCTOS),
+        where('vendedorId', '==', actualizado.id)
+      );
+      const snapProd = await getDocs(consultaProd);
+      if (!snapProd.empty) {
+        const batch = writeBatch(db);
+        for (const docSnap of snapProd.docs) {
+          batch.update(docSnap.ref, { vendedor: actualizado.nombre });
+        }
+        await batch.commit();
+      }
+    } catch {
+      // Fallback local
+    }
+
+    const vendedoresLocales = await leerVendedoresLocales();
+    await guardarVendedoresLocales(
+      vendedoresLocales.map((v) => (v.id === actualizado.id ? actualizado : v))
+    );
     await AsyncStorage.setItem(
       STORAGE_KEYS.SESION_ACTIVA,
       JSON.stringify(actualizado)
     );
 
-    // Sincronizar nombre comercial en productos del vendedor
-    const productos = await leerProductosGuardados();
-    let huboCambiosProductos = false;
-    const productosSincronizados = productos.map((prod) => {
-      if (prod.vendedorId === actualizado.id) {
-        huboCambiosProductos = true;
-        return {
-          ...prod,
-          vendedor: actualizado.nombre,
-        };
-      }
-      return prod;
-    });
-
-    if (huboCambiosProductos) {
-      await guardarProductos(productosSincronizados);
-    }
+    const productosLocales = await leerProductosLocales();
+    await guardarProductosLocales(
+      productosLocales.map((prod) =>
+        prod.vendedorId === actualizado.id
+          ? { ...prod, vendedor: actualizado.nombre }
+          : prod
+      )
+    );
 
     return { ...actualizado };
   }
@@ -545,36 +812,49 @@ export class AuthService {
       throw new Error('No hay una sesión de vendedor activa.');
     }
 
-    const vendedores = await leerVendedoresGuardados();
-    const indice = vendedores.findIndex((v) => v.id === sesion.id);
-    if (indice === -1) {
-      throw new Error('No se encontró el registro del vendedor.');
-    }
-
     const actualizado: VendedorUsuario = {
-      ...vendedores[indice],
+      ...sesion,
       puestoAbierto: abierto,
     };
 
-    vendedores[indice] = actualizado;
-    await guardarVendedores(vendedores);
+    try {
+      await updateDoc(doc(db, COLLECTIONS.VENDEDORES, actualizado.id), {
+        puestoAbierto: abierto,
+      });
+
+      const consultaProd = query(
+        collection(db, COLLECTIONS.PRODUCTOS),
+        where('vendedorId', '==', actualizado.id)
+      );
+      const snapProd = await getDocs(consultaProd);
+      if (!snapProd.empty) {
+        const batch = writeBatch(db);
+        for (const docSnap of snapProd.docs) {
+          batch.update(docSnap.ref, { disponible: abierto });
+        }
+        await batch.commit();
+      }
+    } catch {
+      // Fallback local
+    }
+
+    const vendedoresLocales = await leerVendedoresLocales();
+    await guardarVendedoresLocales(
+      vendedoresLocales.map((v) => (v.id === actualizado.id ? actualizado : v))
+    );
     await AsyncStorage.setItem(
       STORAGE_KEYS.SESION_ACTIVA,
       JSON.stringify(actualizado)
     );
 
-    // Sincronizar disponibilidad de los productos del vendedor al abrir/cerrar puesto
-    const productos = await leerProductosGuardados();
-    const productosSincronizados = productos.map((prod) => {
-      if (prod.vendedorId === actualizado.id) {
-        return {
-          ...prod,
-          disponible: abierto,
-        };
-      }
-      return prod;
-    });
-    await guardarProductos(productosSincronizados);
+    const productosLocales = await leerProductosLocales();
+    await guardarProductosLocales(
+      productosLocales.map((prod) =>
+        prod.vendedorId === actualizado.id
+          ? { ...prod, disponible: abierto }
+          : prod
+      )
+    );
 
     return { ...actualizado };
   }

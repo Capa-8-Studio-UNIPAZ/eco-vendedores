@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { Ionicons } from '@expo/vector-icons';
 
 import { formatearPrecioCOP } from '@/components/TarjetaProducto';
@@ -463,6 +464,23 @@ export default function PerfilVendedorScreen() {
     setModalProductoVisible(true);
   };
 
+async function comprimirImagenParaFirestore(uri: string): Promise<string> {
+  try {
+    const context = ImageManipulator.manipulate(uri).resize({ width: 480 });
+    const imageRef = await context.renderAsync();
+    const resultado = await imageRef.saveAsync({
+      compress: 0.45,
+      format: SaveFormat.JPEG,
+      base64: true,
+    });
+    return resultado.base64
+      ? `data:image/jpeg;base64,${resultado.base64}`
+      : resultado.uri;
+  } catch {
+    return uri;
+  }
+}
+
   const manejarTomarFotoCamara = async (): Promise<void> => {
     try {
       const permiso = await ImagePicker.requestCameraPermissionsAsync();
@@ -482,7 +500,10 @@ export default function PerfilVendedorScreen() {
       });
 
       if (!resultado.canceled && resultado.assets.length > 0) {
-        setProdImagenUrl(resultado.assets[0].uri);
+        const uriComprimida = await comprimirImagenParaFirestore(
+          resultado.assets[0].uri
+        );
+        setProdImagenUrl(uriComprimida);
       }
     } catch {
       Alert.alert(
@@ -511,7 +532,10 @@ export default function PerfilVendedorScreen() {
       });
 
       if (!resultado.canceled && resultado.assets.length > 0) {
-        setProdImagenUrl(resultado.assets[0].uri);
+        const uriComprimida = await comprimirImagenParaFirestore(
+          resultado.assets[0].uri
+        );
+        setProdImagenUrl(uriComprimida);
       }
     } catch {
       Alert.alert(
