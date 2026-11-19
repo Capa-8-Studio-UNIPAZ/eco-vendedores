@@ -9,12 +9,12 @@ Aplicación móvil desarrollada por **Capa8 Studio (UNIPAZ)** para dar visibilid
 Puedes instalar la aplicación directamente en cualquier dispositivo Android (no requiere Expo Go ni Google Play Store):
 
 ### Opción 1: Enlace directo de descarga (EAS Build)
-👉 **[Descargar EcoVendedores v1.0.0 (.apk)](https://expo.dev/accounts/brandvels-team/projects/expoemprendedores/builds/2a4d3206-fdfd-401d-a1bd-ec43638f24b6)**
+👉 **[Descargar EcoVendedores v1.0.0 (.apk)](https://expo.dev/accounts/brandvels-team/projects/expoemprendedores/builds/ce48425b-9cae-41ea-b24d-f2799ee96992)**
 
 ### Opción 2: Escanear Código QR desde tu celular
 Abre la cámara de tu teléfono Android o tu lector QR y escanea el siguiente código para abrir la página de descarga:
 
-![Código QR de descarga EcoVendedores APK](https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https://expo.dev/accounts/brandvels-team/projects/expoemprendedores/builds/2a4d3206-fdfd-401d-a1bd-ec43638f24b6)
+![Código QR de descarga EcoVendedores APK](https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=https://expo.dev/accounts/brandvels-team/projects/expoemprendedores/builds/ce48425b-9cae-41ea-b24d-f2799ee96992)
 
 ### Pasos de instalación en Android
 1. Abre el enlace o escanea el código QR y toca **Install / Download** para bajar el archivo `.apk`.
@@ -50,8 +50,8 @@ Abre la cámara de tu teléfono Android o tu lector QR y escanea el siguiente c�
 
 * **Framework:** React Native + Expo (`SDK 58`) con Expo Router (navegación basada en archivos)
 * **Lenguaje:** TypeScript (`strict: true`)
-* **Persistencia y Resiliencia Offline:** `@react-native-async-storage/async-storage` + configuración Firebase Cloud Firestore (`src/config/firebase.ts`)
-* **Multimedia:** `expo-image-picker` y `expo-image-manipulator`
+* **Persistencia en Tiempo Real y Offline:** Firebase Cloud Firestore (`onSnapshot` en tiempo real) + `@react-native-async-storage/async-storage` (respaldo offline)
+* **Multimedia:** `expo-image-picker` y `expo-image-manipulator` (compresión JPEG optimizada)
 * **Compilación Cloud:** EAS Build (`com.capa8studio.ecovendedores`)
 
 ---
